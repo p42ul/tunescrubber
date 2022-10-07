@@ -93,7 +93,7 @@ def serial_read_thread():
 def main():
     w = threading.Thread(target=window_function)
     w.start()
-    x = threading.Thread(target=serial_read_thread)
+    x = threading.Thread(target=serial_read_thread, daemon=True)
     x.start()
 
 
