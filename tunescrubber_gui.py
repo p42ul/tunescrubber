@@ -96,17 +96,32 @@ def draw_buffer(buffer):
         curIdx += envInterval
 
 def serial_read_thread():
+    absolute_position = None
+    last_angle = None
     while True:
         if not ser.is_open:
             sleep(1)
             continue
         data = ser.read_until(expected=' '.encode('utf-8')).decode('utf-8', 'backslashreplace')
-        print(data)
         try:
             angle = int(data)
         except ValueError:
             logging.warning(f'{data} is not an integer')
             continue
+        if absolute_position is None:
+            absolute_position = angle
+            last_angle = angle
+        else:
+            # Angle goes from Quadrant 4 to Quadrant 1
+            if angle < ANGLE_MAX // 4 and last_angle > (ANGLE_MAX // 4)*3:
+                last_angle -= ANGLE_MAX
+            # Angle goes from Quadrant 1 to Quadrant 4
+            if angle > (ANGLE_MAX // 4)*3 and last_angle < ANGLE_MAX // 4:
+                last_angle += ANGLE_MAX
+            absolute_position += (last_angle - angle)
+            last_angle = angle
+        print(absolute_position)
+
 
 def main():
     w = threading.Thread(target=window_function)
