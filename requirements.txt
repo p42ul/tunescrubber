@@ -1,4 +1,6 @@
+matplotlib
 pyserial
 pysimplegui
 scipy
+simpleaudio
 sklearn
