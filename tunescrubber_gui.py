@@ -3,18 +3,18 @@
 
 
 # Standard libraries
+from time import sleep
 import logging
 import threading
-from time import sleep
 
 # Third-party libraries
+from scipy.io import wavfile
+from scipy.signal import hilbert
+from sklearn import preprocessing
 import PySimpleGUI as sg
+import numpy as np
 import serial
 import serial.tools.list_ports
-from scipy.signal import hilbert
-from scipy.io import wavfile
-import numpy as np
-from sklearn import preprocessing
 
 GRAPH_SIZE = (400,300)
 ANGLE_MAX = 3600
