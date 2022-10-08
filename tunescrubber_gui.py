@@ -15,6 +15,13 @@ import PySimpleGUI as sg
 import numpy as np
 import serial
 import serial.tools.list_ports
+from scipy.signal import hilbert
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.pyplot import figure, show 
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('TkAgg')
 
 GRAPH_SIZE = (400,300)
 ANGLE_MAX = 3600
@@ -26,8 +33,8 @@ ser.baudrate = 115200
 torque = 0
 
 ports_dropdown = sg.Combo((), readonly=True, size=(20, 5), key='Ports')
-torque_slider = sg.Slider(range=(-360, 360), default_value=0, enable_events=True, orientation='horizontal', key='Torque')
-graph = sg.Graph(canvas_size=GRAPH_SIZE, graph_bottom_left=(0,0), graph_top_right=GRAPH_SIZE, key='Graph')
+zoom_slider = sg.Slider(range=(0, 100), default_value=0, enable_events=True, orientation='horizontal', key='Torque')
+canvas = sg.Canvas(key='Canvas')
 open_port = sg.Text('')
 file_browse = sg.FileBrowse(button_text='Open File', key='File', file_types = (('.wav files', '*.wav'),), enable_events=True) 
 
@@ -41,12 +48,20 @@ def window_function():
         [sg.Text('Ports'), ports_dropdown, sg.Button('Refresh')],
         [sg.Button('Open Port'), open_port],
         [file_browse],
-        [graph],
-        [sg.Text('Torque'), torque_slider, sg.Button('Reset')],
+        [canvas],
+        [sg.Text('Zoom'), zoom_slider, sg.Button('Reset')],
         [sg.Button('Quit')],
     ]
     # Create the Window
     window = sg.Window('Serial Communicator', [layout], resizable=True, finalize=True)
+
+    plt.figure(1)
+    plt.subplot(111)
+    fig = matplotlib.figure.Figure(figsize=(5, 4), dpi=100)
+    envPlot = fig.add_subplot(111)
+    fig_canvas_agg = FigureCanvasTkAgg(fig, canvas.TKCanvas)
+    fig_canvas_agg = draw_figure(fig_canvas_agg)
+
     while True:
         event, values = window.read()
         if event == sg.WIN_CLOSED or event == 'Quit': # if user closes window or clicks cancel
@@ -60,12 +75,14 @@ def window_function():
         elif event == 'File':
             sample_rate, audio_buffer = wavfile.read(values['File'])
             envelope = calc_envelope(audio_buffer)
-            draw_buffer(envelope)
+            plt.clf()
+            envPlot.plot(envelope)
+            fig_canvas_agg = draw_figure(fig_canvas_agg)
         elif event == 'Refresh':
             ports = serial.tools.list_ports.comports()
             ports_dropdown.update(values=[port for (port, desc, hwid) in ports])
-        elif event == 'Torque':
-            torque = values['Torque']
+        elif event == 'Zoom':
+            torque = values['Zoom']
             if ser.is_open:
                 ser.write(bytes(str(int(torque)), 'utf-8'))
         elif event == 'Reset':
@@ -78,22 +95,90 @@ def window_function():
 
 # Calculates the amplitude envelope of the audio file
 def calc_envelope(buffer):
-    analytic_signal = hilbert(buffer)
-    return preprocessing.normalize(np.abs(analytic_signal))
+    analytic_signal = np.abs(hilbert(buffer)[:, 0])
+    return analytic_signal / np.linalg.norm(analytic_signal)
 
-def draw_buffer(buffer):
-    graph.erase()
-    curX = 0
-    curIdx = 0
-    lastY = 0
-    num_samps = min(MAX_ENV_SAMPS, len(envelope))
-    xInterval = GRAPH_SIZE[0] / num_samps
-    envInterval = len(envelope) / num_samps
-    for i in range(num_samps):
-        graph.DrawLine((curX, lastY), (curX + xInterval, envelope[int(curIdx)][0] * GRAPH_SIZE[1]))
-        lastY = envelope[int(curIdx)][0] * GRAPH_SIZE[1]
-        curX += xInterval
-        curIdx += envInterval
+def draw_figure(figure_canvas_agg):
+    figure_canvas_agg.draw()
+    figure_canvas_agg.get_tk_widget().pack(side='top', fill='both', expand=1)
+    return figure_canvas_agg
+
+class ZoomPan:
+    def __init__(self):
+        self.cur_xlim = None
+        self.cur_ylim = None
+        self.x0 = None
+        self.y0 = None
+        self.x1 = None
+        self.y1 = None
+
+    def zoom_factory(self, ax, base_scale = 2.):
+        def zoom(event):
+            cur_xlim = ax.get_xlim()
+            cur_ylim = ax.get_ylim()
+
+            xdata = event.xdata # get event x location
+            ydata = event.ydata # get event y location
+
+            if event.button == 'up':
+                # deal with zoom in
+                scale_factor = 1 / base_scale
+            elif event.button == 'down':
+                # deal with zoom out
+                scale_factor = base_scale
+            else:
+                # deal with something that should never happen
+                scale_factor = 1
+                print (event.button)
+
+            new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
+            new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
+
+            relx = (cur_xlim[1] - xdata)/(cur_xlim[1] - cur_xlim[0])
+            rely = (cur_ylim[1] - ydata)/(cur_ylim[1] - cur_ylim[0])
+
+            ax.set_xlim([xdata - new_width * (1-relx), xdata + new_width * (relx)])
+            ax.set_ylim([ydata - new_height * (1-rely), ydata + new_height * (rely)])
+            ax.figure.canvas.draw()
+
+        fig = ax.get_figure() # get the figure of interest
+        fig.canvas.mpl_connect('scroll_event', zoom)
+
+        return zoom
+
+    def pan_factory(self, ax):
+        def onPress(event):
+            if event.inaxes != ax: return
+            self.cur_xlim = ax.get_xlim()
+            self.cur_ylim = ax.get_ylim()
+            self.press = self.x0, self.y0, event.xdata, event.ydata
+            self.x0, self.y0, self.xpress, self.ypress = self.press
+
+        def onRelease(event):
+            self.press = None
+            ax.figure.canvas.draw()
+
+        def onMotion(event):
+            if self.press is None: return
+            if event.inaxes != ax: return
+            dx = event.xdata - self.xpress
+            dy = event.ydata - self.ypress
+            self.cur_xlim -= dx
+            self.cur_ylim -= dy
+            ax.set_xlim(self.cur_xlim)
+            ax.set_ylim(self.cur_ylim)
+
+            ax.figure.canvas.draw()
+
+        fig = ax.get_figure() # get the figure of interest
+
+        # attach the call back
+        fig.canvas.mpl_connect('button_press_event',onPress)
+        fig.canvas.mpl_connect('button_release_event',onRelease)
+        fig.canvas.mpl_connect('motion_notify_event',onMotion)
+
+        #return the function
+        return onMotion
 
 def serial_read_thread():
     absolute_position = None
