@@ -3,6 +3,7 @@
 
 
 # Standard libraries
+import atexit
 from time import sleep
 import logging
 import threading
@@ -33,6 +34,8 @@ MAX_ENV_SAMPS = 1000
 ser = serial.Serial()
 ser.baudrate = 115200
 
+sample_rate = audio_buffer = num_channels = bytes_per_sample = None
+
 torque = 0
 
 ports_dropdown = sg.Combo((), readonly=True, size=(20, 5), key='Ports')
@@ -40,10 +43,11 @@ zoom_slider = sg.Slider(range=(0, 100), default_value=0, enable_events=True, ori
 canvas = sg.Canvas(key='Canvas')
 open_port = sg.Text('')
 file_browse = sg.FileBrowse(button_text='Open File', key='File', file_types = (('.wav files', '*.wav'),), enable_events=True) 
+position_indicator = sg.ProgressBar(max_value=3600, orientation='horizontal', key='position_indicator')
 
 sg.change_look_and_feel('LightGreen')
 def window_function():
-    global envelope
+    global envelope, sample_rate, audio_buffer, num_channels, bytes_per_sample
     
     # sg.theme('DarkAmber')   # Add a touch of color
     # All the stuff inside your window.
@@ -52,6 +56,7 @@ def window_function():
         [sg.Button('Open Port'), open_port],
         [file_browse],
         [canvas],
+        [position_indicator],
         [sg.Text('Zoom'), zoom_slider, sg.Button('Reset')],
         [sg.Button('Quit')],
     ]
@@ -82,19 +87,22 @@ def window_function():
                 num_channels = w.getnchannels()
             sample_rate, audio_buffer = wavfile.read(filepath)
             envelope = calc_envelope(audio_buffer)
-            sa.play_buffer(audio_buffer, num_channels=num_channels, bytes_per_sample=bytes_per_sample, sample_rate=sample_rate)
             plt.clf()
             envPlot.plot(envelope)
             fig_canvas_agg = draw_figure(fig_canvas_agg)
         elif event == 'Refresh':
             ports = serial.tools.list_ports.comports()
             ports_dropdown.update(values=[port for (port, desc, hwid) in ports])
-        elif event == 'Zoom':
-            torque = values['Zoom']
-            if ser.is_open:
-                ser.write(bytes(str(int(torque)), 'utf-8'))
             
     window.close()
+
+
+def slice_buffer(buffer, begin, end):
+    if begin <= end:
+        step = 1
+    else:
+        step = -1
+    return buffer[begin:end:step]
 
 # Calculates the amplitude envelope of the audio file
 def calc_envelope(buffer):
@@ -110,8 +118,8 @@ def draw_figure(figure_canvas_agg):
     return figure_canvas_agg
 
 def serial_read_thread():
-    absolute_position = None
-    last_angle = None
+    absolute_position = last_absolute_position = 0
+    angle = last_angle = None
     while True:
         if not ser.is_open:
             sleep(1)
@@ -122,8 +130,7 @@ def serial_read_thread():
         except ValueError:
             logging.warning(f'{data} is not an integer')
             continue
-        if absolute_position is None:
-            absolute_position = angle
+        if last_angle is None:
             last_angle = angle
             continue
         # Angle goes from Quadrant 4 to Quadrant 1
@@ -132,15 +139,25 @@ def serial_read_thread():
         # Angle goes from Quadrant 1 to Quadrant 4
         if angle > (ANGLE_MAX // 4)*3 and last_angle < ANGLE_MAX // 4:
             last_angle += ANGLE_MAX
+        position_indicator.update(angle)
         delta = last_angle - angle
         inverse_torque = delta / 10
-        ser.write(bytes(str(inverse_torque), 'utf-8'))
-        absolute_position += delta
+        # ser.write(bytes(str(inverse_torque), 'utf-8'))
+        last_absolute_position = absolute_position
+        absolute_position = max(0, absolute_position+delta)
         last_angle = angle
-        print(absolute_position)
+        print(f'last: {last_absolute_position} current: {absolute_position}')
+        if last_absolute_position != absolute_position:
+            chunk = slice_buffer(audio_buffer, last_absolute_position, absolute_position)
+            chunk = chunk.copy(order='C') # See https://stackoverflow.com/questions/26778079/valueerror-ndarray-is-not-c-contiguous-in-cython for why this is needed.
+            sa.play_buffer(chunk, num_channels=num_channels, bytes_per_sample=bytes_per_sample, sample_rate=sample_rate)
+
+def reset_torque():
+    ser.write(bytes('0', 'utf-8'))
 
 
 def main():
+    atexit.register(reset_torque)
     w = threading.Thread(target=window_function)
     w.start()
     x = threading.Thread(target=serial_read_thread, daemon=True)
