@@ -35,6 +35,8 @@ ser = serial.Serial()
 ser.baudrate = 115200
 
 sample_rate = audio_buffer = num_channels = bytes_per_sample = None
+playhead_position = 0
+seconds_per_rotation = 2
 
 torque = 0
 
@@ -97,13 +99,6 @@ def window_function():
     window.close()
 
 
-def slice_buffer(buffer, begin, end):
-    if begin <= end:
-        step = 1
-    else:
-        step = -1
-    return buffer[begin:end:step]
-
 # Calculates the amplitude envelope of the audio file
 def calc_envelope(buffer):
     if type(buffer[0]) == list:
@@ -118,7 +113,7 @@ def draw_figure(figure_canvas_agg):
     return figure_canvas_agg
 
 def serial_read_thread():
-    absolute_position = last_absolute_position = 0
+    global playhead_position
     angle = last_angle = None
     while True:
         if not ser.is_open:
@@ -141,16 +136,22 @@ def serial_read_thread():
             last_angle += ANGLE_MAX
         position_indicator.update(angle)
         delta = last_angle - angle
-        inverse_torque = delta / 10
-        # ser.write(bytes(str(inverse_torque), 'utf-8'))
-        last_absolute_position = absolute_position
-        absolute_position = max(0, absolute_position+delta)
         last_angle = angle
-        print(f'last: {last_absolute_position} current: {absolute_position}')
-        if last_absolute_position != absolute_position:
-            chunk = slice_buffer(audio_buffer, last_absolute_position, absolute_position)
-            chunk = chunk.copy(order='C') # See https://stackoverflow.com/questions/26778079/valueerror-ndarray-is-not-c-contiguous-in-cython for why this is needed.
-            sa.play_buffer(chunk, num_channels=num_channels, bytes_per_sample=bytes_per_sample, sample_rate=sample_rate)
+        if abs(delta) < 10:
+            continue
+        if delta >= 0:
+            step = 1
+        else:
+            step = -1
+        samples_per_delta_unit = sample_rate // ANGLE_MAX * seconds_per_rotation
+        new_playhead_position = max(playhead_position + (delta*samples_per_delta_unit), 0)
+        if new_playhead_position == 0:
+            continue
+        chunk = audio_buffer[playhead_position:new_playhead_position:step].copy()
+        playhead_position = new_playhead_position
+        play_thread = threading.Thread(target=sa.play_buffer, args=[chunk, num_channels, bytes_per_sample, sample_rate])
+        play_thread.start()
+
 
 def reset_torque():
     ser.write(bytes('0', 'utf-8'))
