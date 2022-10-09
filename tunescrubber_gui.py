@@ -38,12 +38,12 @@ ser.baudrate = 115200
 playback_buffer = deque()
 sample_rate = audio_buffer = num_channels = bytes_per_sample = None
 playhead_position = 0
-seconds_per_rotation = 2
+seconds_per_rotation = 1
 
-torque = 0
+
 
 ports_dropdown = sg.Combo((), readonly=True, size=(20, 5), key='Ports')
-zoom_slider = sg.Slider(range=(0, 100), default_value=0, enable_events=True, orientation='horizontal', key='Torque')
+zoom_slider = sg.Slider(range=(1, 3), default_value=seconds_per_rotation, enable_events=True, orientation='horizontal', key='Zoom')
 canvas = sg.Canvas(key='Canvas')
 open_port = sg.Text('')
 file_browse = sg.FileBrowse(button_text='Open File', key='File', file_types = (('.wav files', '*.wav'),), enable_events=True) 
@@ -52,6 +52,7 @@ position_indicator = sg.ProgressBar(max_value=3600, orientation='horizontal', ke
 sg.change_look_and_feel('LightGreen')
 def window_function():
     global envelope, sample_rate, audio_buffer, num_channels, bytes_per_sample
+    global seconds_per_rotation
     
     # sg.theme('DarkAmber')   # Add a touch of color
     # All the stuff inside your window.
@@ -97,6 +98,9 @@ def window_function():
         elif event == 'Refresh':
             ports = serial.tools.list_ports.comports()
             ports_dropdown.update(values=[port for (port, desc, hwid) in ports])
+        elif event == 'Zoom':
+            seconds_per_rotation = values['Zoom']
+
             
     window.close()
 
@@ -145,7 +149,7 @@ def serial_read_thread():
             step = 1
         else:
             step = -1
-        samples_per_delta_unit = sample_rate // ANGLE_MAX * seconds_per_rotation
+        samples_per_delta_unit = int((sample_rate / ANGLE_MAX) * seconds_per_rotation)
         new_playhead_position = max(playhead_position + (delta*samples_per_delta_unit), 0)
         if new_playhead_position == 0:
             continue
