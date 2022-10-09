@@ -156,15 +156,19 @@ def serial_read_thread():
 
 def playback_thread():
     global playback_buffer
-    local_buffer = []
+    local_buffer = None
     while True:
         sleep(0.01)
         while playback_buffer:
-            local_buffer += playback_buffer.pop()
-        if local_buffer:
+            chunk = playback_buffer.pop()
+            if local_buffer is None:
+                local_buffer = chunk
+            else:
+                local_buffer = np.concatenate((local_buffer, chunk))
+        if local_buffer is not None:
             print(f'playing buffer of size {len(local_buffer)}')
             sa.play_buffer(local_buffer, num_channels, bytes_per_sample, sample_rate)
-            local_buffer.clear()
+            local_buffer = None
 
 
 
