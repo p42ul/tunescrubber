@@ -15,7 +15,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.pyplot import figure, show 
 from scipy.io import wavfile
 from scipy.signal import hilbert
-from scipy.signal import hilbert
 from sklearn import preprocessing
 import PySimpleGUI as sg
 import matplotlib
