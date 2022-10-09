@@ -39,6 +39,8 @@ sample_rate = audio_buffer = num_channels = bytes_per_sample = None
 playhead_position = 0
 seconds_per_rotation = 1
 
+envelope = None
+
 
 
 ports_dropdown = sg.Combo((), readonly=True, size=(20, 5), key='Ports')
@@ -150,10 +152,10 @@ def serial_read_thread():
             step = -1
         samples_per_delta_unit = int((sample_rate / ANGLE_MAX) * seconds_per_rotation)
         new_playhead_position = max(playhead_position + (delta*samples_per_delta_unit), 0)
-        if new_playhead_position == 0:
-            continue
+        new_playhead_position = min(new_playhead_position, len(audio_buffer)-1)
         chunk = audio_buffer[playhead_position:new_playhead_position:step].copy(order='C')
-        playback_buffer.appendleft(chunk)
+        if len(chunk) > 0:
+            playback_buffer.appendleft(chunk)
         playhead_position = new_playhead_position
         print(f'new playhead: {new_playhead_position}')
 
@@ -161,7 +163,7 @@ def playback_thread():
     global playback_buffer
     local_buffer = None
     while True:
-        sleep(0.01)
+        sleep(0.005)
         while playback_buffer:
             chunk = playback_buffer.pop()
             if local_buffer is None:
