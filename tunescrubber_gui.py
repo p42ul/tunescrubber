@@ -3,8 +3,9 @@
 
 
 # Standard libraries
-import atexit
+from collections import deque
 from time import sleep
+import atexit
 import logging
 import threading
 import wave
@@ -34,6 +35,7 @@ MAX_ENV_SAMPS = 1000
 ser = serial.Serial()
 ser.baudrate = 115200
 
+playback_buffer = deque()
 sample_rate = audio_buffer = num_channels = bytes_per_sample = None
 playhead_position = 0
 seconds_per_rotation = 2
@@ -113,7 +115,7 @@ def draw_figure(figure_canvas_agg):
     return figure_canvas_agg
 
 def serial_read_thread():
-    global playhead_position
+    global playhead_position, playback_buffer
     angle = last_angle = None
     while True:
         if not ser.is_open:
@@ -147,10 +149,23 @@ def serial_read_thread():
         new_playhead_position = max(playhead_position + (delta*samples_per_delta_unit), 0)
         if new_playhead_position == 0:
             continue
-        chunk = audio_buffer[playhead_position:new_playhead_position:step].copy()
+        chunk = audio_buffer[playhead_position:new_playhead_position:step].copy(order='C')
+        playback_buffer.appendleft(chunk)
         playhead_position = new_playhead_position
-        play_thread = threading.Thread(target=sa.play_buffer, args=[chunk, num_channels, bytes_per_sample, sample_rate])
-        play_thread.start()
+        print(f'new playhead: {new_playhead_position}')
+
+def playback_thread():
+    global playback_buffer
+    local_buffer = []
+    while True:
+        sleep(0.01)
+        while playback_buffer:
+            local_buffer += playback_buffer.pop()
+        if local_buffer:
+            print(f'playing buffer of size {len(local_buffer)}')
+            sa.play_buffer(local_buffer, num_channels, bytes_per_sample, sample_rate)
+            local_buffer.clear()
+
 
 
 def reset_torque():
@@ -159,10 +174,9 @@ def reset_torque():
 
 def main():
     atexit.register(reset_torque)
-    w = threading.Thread(target=window_function)
-    w.start()
-    x = threading.Thread(target=serial_read_thread, daemon=True)
-    x.start()
+    threading.Thread(target=window_function).start()
+    threading.Thread(target=serial_read_thread, daemon=True).start()
+    threading.Thread(target=playback_thread, daemon=True).start()
 
 
 if __name__ == '__main__':
