@@ -14,7 +14,7 @@ import wave
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.pyplot import figure, show 
 from scipy.io import wavfile
-from scipy.signal import hilbert
+from scipy.signal import hilbert, tukey
 from sklearn import preprocessing
 import PySimpleGUI as sg
 import matplotlib
@@ -63,7 +63,7 @@ def window_function():
         [file_browse],
         [canvas],
         [position_indicator],
-        [sg.Text('Zoom'), zoom_slider, sg.Button('Reset')],
+        # [sg.Text('Zoom'), zoom_slider, sg.Button('Reset')],
         [sg.Button('Quit')],
     ]
     # Create the Window
@@ -92,6 +92,10 @@ def window_function():
                 bytes_per_sample = w.getsampwidth()
                 num_channels = w.getnchannels()
             sample_rate, audio_buffer = wavfile.read(filepath)
+            if num_channels > 1:
+                audio_buffer = audio_buffer[:, 0] # quick hack to get mono signal
+                sample_rate = sample_rate // num_channels
+                seconds_per_rotation *= num_channels
             envelope = calc_envelope(audio_buffer)
             plt.clf()
             envPlot.plot(envelope)
@@ -135,29 +139,35 @@ def serial_read_thread():
         if last_angle is None:
             last_angle = angle
             continue
+        position_indicator.update(angle)
         # Angle goes from Quadrant 4 to Quadrant 1
         if angle < ANGLE_MAX // 4 and last_angle > (ANGLE_MAX // 4)*3:
             last_angle -= ANGLE_MAX
         # Angle goes from Quadrant 1 to Quadrant 4
         if angle > (ANGLE_MAX // 4)*3 and last_angle < ANGLE_MAX // 4:
             last_angle += ANGLE_MAX
-        position_indicator.update(angle)
         delta = last_angle - angle
         last_angle = angle
         if abs(delta) < 10:
             continue
         if delta >= 0:
-            step = 1
-        else:
             step = -1
+        else:
+            step = 1
         samples_per_delta_unit = int((sample_rate / ANGLE_MAX) * seconds_per_rotation)
-        new_playhead_position = max(playhead_position + (delta*samples_per_delta_unit), 0)
+        new_playhead_position = max(playhead_position - (delta*samples_per_delta_unit), 0)
         new_playhead_position = min(new_playhead_position, len(audio_buffer)-1)
+        # The copy() is necessary so that everything is contiguous in memory.
         chunk = audio_buffer[playhead_position:new_playhead_position:step].copy(order='C')
-        if len(chunk) > 0:
-            playback_buffer.appendleft(chunk)
+        if len(chunk) == 0:
+            continue
+        target_type = type(chunk[0])
+        print(f'target type: {target_type}')
+        # Smooth the ends of the signal
+        window = tukey(len(chunk), alpha=0.1)
+        chunk = np.multiply(chunk, window).astype(target_type)
+        playback_buffer.appendleft(chunk)
         playhead_position = new_playhead_position
-        print(f'new playhead: {new_playhead_position}')
 
 def playback_thread():
     global playback_buffer
@@ -176,9 +186,8 @@ def playback_thread():
             local_buffer = None
 
 
-
 def reset_torque():
-    ser.write(bytes('0', 'utf-8'))
+    ser.write(bytes(' 0', 'utf-8'))
 
 
 def main():
