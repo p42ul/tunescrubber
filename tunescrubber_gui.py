@@ -39,6 +39,8 @@ sample_rate = audio_buffer = num_channels = bytes_per_sample = None
 playhead_position = 0
 seconds_per_rotation = 1
 
+torque_multiplier = 5000
+
 envelope = None
 
 
@@ -49,12 +51,16 @@ canvas = sg.Canvas(key='Canvas')
 open_port = sg.Text('')
 file_browse = sg.FileBrowse(button_text='Open File', key='File', file_types = (('.wav files', '*.wav'),), enable_events=True) 
 position_indicator = sg.ProgressBar(max_value=3600, orientation='horizontal', key='position_indicator')
+torque_slider = sg.Slider(range=(0, 25000), default_value=torque_multiplier, key='TorqueSlider', enable_events=True, orientation='horizontal')
 
 sg.change_look_and_feel('LightGreen')
 def window_function():
     global envelope, sample_rate, audio_buffer, num_channels, bytes_per_sample
+    global torque_multiplier
     global seconds_per_rotation
     
+
+
     # sg.theme('DarkAmber')   # Add a touch of color
     # All the stuff inside your window.
     layout = [
@@ -64,18 +70,18 @@ def window_function():
         [canvas],
         [position_indicator],
         # [sg.Text('Zoom'), zoom_slider, sg.Button('Reset')],
+        [torque_slider],
+        [sg.Button('Clear')],
         [sg.Button('Quit')],
     ]
     # Create the Window
     window = sg.Window('TuneScrubber', [layout], resizable=True, finalize=True)
 
+
     plt.figure(1)
     plt.subplot(111)
     fig = matplotlib.figure.Figure(figsize=(5, 4), dpi=100)
     envPlot = fig.add_subplot(111)
-    fig_canvas_agg = FigureCanvasTkAgg(fig, canvas.TKCanvas)
-    fig_canvas_agg = draw_figure(fig_canvas_agg)
-
     while True:
         event, values = window.read()
         if event == sg.WIN_CLOSED or event == 'Quit': # if user closes window or clicks cancel
@@ -94,17 +100,23 @@ def window_function():
             sample_rate, audio_buffer = wavfile.read(filepath)
             if num_channels > 1:
                 audio_buffer = audio_buffer[:, 0] # quick hack to get mono signal
-                sample_rate = sample_rate // num_channels
-                seconds_per_rotation *= num_channels
+                num_channels = 1
             envelope = calc_envelope(audio_buffer)
-            plt.clf()
+            fig_canvas_agg = FigureCanvasTkAgg(fig, canvas.TKCanvas)
             envPlot.plot(envelope)
             fig_canvas_agg = draw_figure(fig_canvas_agg)
         elif event == 'Refresh':
             ports = serial.tools.list_ports.comports()
             ports_dropdown.update(values=[port for (port, desc, hwid) in ports])
-        elif event == 'Zoom':
-            seconds_per_rotation = values['Zoom']
+        elif event == 'TorqueSlider':
+            torque_multiplier = values['TorqueSlider']
+        elif event == 'Clear':
+            print('clearing canvas')
+            fig_canvas_agg.get_tk_widget().forget()
+            plt.cla()
+            plt.clf()
+            fig_canvas_agg = draw_figure(fig_canvas_agg)
+
 
             
     window.close()
@@ -154,6 +166,8 @@ def serial_read_thread():
             step = -1
         else:
             step = 1
+        if audio_buffer is None:
+            continue
         samples_per_delta_unit = int((sample_rate / ANGLE_MAX) * seconds_per_rotation)
         new_playhead_position = max(playhead_position - (delta*samples_per_delta_unit), 0)
         new_playhead_position = min(new_playhead_position, len(audio_buffer)-1)
@@ -161,8 +175,11 @@ def serial_read_thread():
         chunk = audio_buffer[playhead_position:new_playhead_position:step].copy(order='C')
         if len(chunk) == 0:
             continue
+        envelope_chunk = envelope[playhead_position:new_playhead_position:step]
+        avg_amplitude = np.mean(envelope_chunk)
+        torque = int(avg_amplitude * torque_multiplier * step * -1)
+        ser.write(f'{torque}'.encode('utf-8'))
         target_type = type(chunk[0])
-        print(f'target type: {target_type}')
         # Smooth the ends of the signal
         window = tukey(len(chunk), alpha=0.1)
         chunk = np.multiply(chunk, window).astype(target_type)
@@ -181,13 +198,13 @@ def playback_thread():
             else:
                 local_buffer = np.concatenate((local_buffer, chunk))
         if local_buffer is not None:
-            print(f'playing buffer of size {len(local_buffer)}')
             sa.play_buffer(local_buffer, num_channels, bytes_per_sample, sample_rate)
             local_buffer = None
 
 
 def reset_torque():
-    ser.write(bytes(' 0', 'utf-8'))
+    if ser.is_open:
+        ser.write(bytes(' 0' , 'utf-8'))
 
 
 def main():
