@@ -33,7 +33,7 @@ playhead_position = 0
 playhead_line = None
 seconds_per_rotation = 1
 
-torque_multiplier = 5000
+torque_multiplier = 2000
 
 envelope = None
 
@@ -66,7 +66,7 @@ def window_function():
         [position_indicator],
         # [sg.Text('Zoom'), zoom_slider, sg.Button('Reset')],
         [sg.Text('Sensitivity'), torque_slider],
-        [sg.Button('Clear')],
+        [sg.Text('Seconds Per Rotation'), sg.Slider((0.5, 3), default_value=1, resolution=0.5, tick_interval=1, enable_events=True, key='SecondsPer', orientation='horizontal')],
         [sg.Button('Quit')],
     ]
     # Create the Window
@@ -77,6 +77,8 @@ def window_function():
             break
         elif event == 'OpenButton':
             port = values['Ports']
+            if not port:
+                continue
             ser.port = port
             if not ser.is_open:
                 ser.open()
@@ -94,15 +96,13 @@ def window_function():
             graph.erase()
             envelope = calc_envelope(audio_buffer)
             draw_envelope()
+        elif event == 'SecondsPer':
+            seconds_per_rotation = values['SecondsPer']
         elif event == 'Refresh':
             ports = serial.tools.list_ports.comports()
             ports_dropdown.update(values=[port for (port, desc, hwid) in ports])
         elif event == 'TorqueSlider':
             torque_multiplier = values['TorqueSlider']
-        elif event == 'Clear':
-            print('clearing canvas')
-            envelope = None
-            graph.erase()
 
             
     window.close()
