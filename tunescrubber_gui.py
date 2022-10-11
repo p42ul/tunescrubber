@@ -112,7 +112,7 @@ def draw_envelope():
     # Draw envelope
     if envelope is not None:
         samples_per_pixel = len(envelope) // w
-        for x in range(w-1):
+        for x in range(w):
             val = envelope[x * samples_per_pixel] * h * 200 # dirty hack to "normalize"
             graph.draw_line((x, 0), (x, val), color='white')
 
@@ -162,7 +162,7 @@ def serial_read_thread():
             last_angle += ANGLE_MAX
         delta = last_angle - angle
         last_angle = angle
-        if abs(delta) < 10:
+        if abs(delta) < 10: # don't do anything for differences of less than 1 degree
             continue
         if delta >= 0:
             step = -1
@@ -171,8 +171,9 @@ def serial_read_thread():
         if audio_buffer is None:
             continue
         samples_per_delta_unit = int((sample_rate / ANGLE_MAX) * seconds_per_rotation)
-        new_playhead_position = max(playhead_position - (delta*samples_per_delta_unit), 0)
-        new_playhead_position = min(new_playhead_position, len(audio_buffer)-1)
+        new_playhead_position = playhead_position - (delta*samples_per_delta_unit)
+        new_playhead_position = max(new_playhead_position, 0)
+        new_playhead_position = min(new_playhead_position, len(audio_buffer)-10)
         # The copy() is necessary so that everything is contiguous in memory.
         chunk = audio_buffer[playhead_position:new_playhead_position:step].copy(order='C')
         if len(chunk) == 0:
