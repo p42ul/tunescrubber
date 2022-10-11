@@ -31,9 +31,9 @@ playback_buffer = deque()
 sample_rate = audio_buffer = num_channels = bytes_per_sample = None
 playhead_position = 0
 playhead_line = None
-seconds_per_rotation = 1
+seconds_per_rotation = 2
 
-torque_multiplier = 2000
+torque_multiplier = 2500
 
 envelope = None
 
@@ -66,7 +66,7 @@ def window_function():
         [position_indicator],
         # [sg.Text('Zoom'), zoom_slider, sg.Button('Reset')],
         [sg.Text('Sensitivity'), torque_slider],
-        [sg.Text('Seconds Per Rotation'), sg.Slider((0.5, 3), default_value=1, resolution=0.5, tick_interval=1, enable_events=True, key='SecondsPer', orientation='horizontal')],
+        [sg.Text('Seconds Per Rotation'), sg.Slider((0.5, 3), default_value=seconds_per_rotation, resolution=0.5, tick_interval=1, enable_events=True, key='SecondsPer', orientation='horizontal')],
         [sg.Button('Quit')],
     ]
     # Create the Window
